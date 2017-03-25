@@ -95,8 +95,8 @@ func main() {
 	fmt.Printf("New version of tweet %q is now %d\n\n", update.Id, update.Version)
 
 	// Create an aggregation for users and a sub-aggregation for a date histogram of tweets (per year).
-	timeline := elastic.NewTermsAggregation().Field("user.keyword").Size(10).OrderByCountDesc()
-	histogram := elastic.NewDateHistogramAggregation().Field("@timestamp").Interval("hour")
+	timeline := elastic.NewTermsAggregation().Field("user.keyword").Size(2).OrderByCountDesc()
+	histogram := elastic.NewDateHistogramAggregation().Field("@timestamp").Interval("week")
 	timeline = timeline.SubAggregation("history", histogram)
 	// Search with a term query
 	searchResult, err := client.Search().
@@ -116,7 +116,12 @@ func main() {
 	if !found {
 		fmt.Printf("we should have a terms aggregation called %q", "timeline")
 	}
+
+	// fmt.Printf("agg.Buckets => %q", agg.Buckets)
+
+
 	for _, userBucket := range agg.Buckets {
+		// fmt.Printf	("userBucket => %q", userBucket)
 		// Every bucket should have the user field as key.
 		user := userBucket.Key
 
