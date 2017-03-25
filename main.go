@@ -5,13 +5,14 @@ import (
 	"golang.org/x/net/context"
 	elastic "gopkg.in/olivere/elastic.v5"
 	"time"
+	"strconv"
 )
 
 // Tweet is a structure used for serializing/deserializing data in Elasticsearch.
 type Tweet struct {
 	User     string                `json:"user"`
 	Message  string                `json:"message"`
-	Retweets int                   `json:"retweets"`
+	Retweets int64                 `json:"retweets"`
 	Image    string                `json:"image,omitempty"`
 	Created  time.Time             `json:"created,omitempty"`
 	Tags     []string              `json:"tags,omitempty"`
@@ -46,14 +47,14 @@ func main() {
 	fmt.Printf("Elasticsearch version %s", esversion)
 
 	// Use the IndexExists service to check if a specified index exists.
-	exists, err := client.IndexExists("twitter").Do(ctx)
+	exists, err := client.IndexExists("twitter-weekly").Do(ctx)
 	if err != nil {
 		// Handle error
 		panic(err)
 	}
 	if !exists {
 		// Create a new index.
-		createIndex, err := client.CreateIndex("twitter").Do(ctx)
+		createIndex, err := client.CreateIndex("twitter-weekly").Do(ctx)
 		if err != nil {
 			// Handle error
 			panic(err)
@@ -63,39 +64,9 @@ func main() {
 		}
 	}
 
-	get1, err := client.Get().
-		Index("logstash-twitter").
-		Type("logs").
-		Id("AVsDYvgq978bpCTDrGz6").
-		Do(ctx)
-	if err != nil {
-		// Handle error
-		panic(err)
-	}
-	if get1.Found {
-		fmt.Printf("Got document %s in version %d from index %s, type %s\n", get1.Id, get1.Version, get1.Index, get1.Type)
-	}
-
-	// Flush to make sure the documents got written.
-	_, err = client.Flush().Index("logstash-twitter").Do(ctx)
-	if err != nil {
-		panic(err)
-	}
-
-	// Update a tweet by the update API of Elasticsearch.
-	// We just increment the number of retweets.
-	update, err := client.Update().Index("logstash-twitter").Type("logs").Id("AVsDdqYX978bpCTDrHco").
-		Script(elastic.NewScriptInline("ctx._source.retweeted = params.num").Lang("painless").Param("num", true)).
-		Upsert(map[string]interface{}{"retweets": 0}).
-		Do(ctx)
-	if err != nil {
-		// Handle error
-		panic(err)
-	}
-	fmt.Printf("New version of tweet %q is now %d\n\n", update.Id, update.Version)
 
 	// Create an aggregation for users and a sub-aggregation for a date histogram of tweets (per year).
-	timeline := elastic.NewTermsAggregation().Field("user.keyword").Size(2).OrderByCountDesc()
+	timeline := elastic.NewTermsAggregation().Field("user.keyword").Size(20).OrderByCountDesc()
 	histogram := elastic.NewDateHistogramAggregation().Field("@timestamp").Interval("week")
 	timeline = timeline.SubAggregation("history", histogram)
 	// Search with a term query
@@ -119,7 +90,7 @@ func main() {
 
 	// fmt.Printf("agg.Buckets => %q", agg.Buckets)
 
-
+  count :=1
 	for _, userBucket := range agg.Buckets {
 		// fmt.Printf	("userBucket => %q", userBucket)
 		// Every bucket should have the user field as key.
@@ -127,9 +98,28 @@ func main() {
 
 		// The sub-aggregation history should have the number of tweets per year.
 		histogram, found := userBucket.DateHistogram("history")
+
 		if found {
 			for _, year := range histogram.Buckets {
 				fmt.Printf("user %q has %d tweets in %q\n", user, year.DocCount, year.KeyAsString)
+
+				if user_str, ok := user.(string); ok {
+					// Index a tweet (using JSON serialization)
+					tweet1 := Tweet{User: user_str, Message: "weekly", Retweets: year.DocCount, Created: time.Now()}
+					put1, err := client.Index().
+						Index("twitter-weekly").
+						Type("tweet").
+						Id(strconv.Itoa(count)).
+						BodyJson(tweet1).
+						Do(context.Background())
+						count++
+					if err != nil {
+						// Handle error
+						panic(err)
+					}
+					fmt.Printf("Indexed tweet( %s )to index %s, type %s\n", put1.Id, put1.Index, put1.Type)
+
+				}
 			}
 		}
 	}
